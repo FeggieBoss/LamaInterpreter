@@ -1,0 +1,5 @@
+var x,y,z;
+x := read();
+y := read();
+z := y * y;
+write (x+z) 

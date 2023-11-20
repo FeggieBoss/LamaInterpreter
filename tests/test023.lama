@@ -1,0 +1,19 @@
+fun foo(x) {
+    write(case x of
+          A(B(_)) -> 2
+        | [1,2,3] -> 3
+        | "abc" -> 1
+    esac)
+}
+
+var x = "abc";
+foo(x);
+
+x:=A(B(A(Nil)));
+foo(x);
+
+x:=[1,2,3];
+foo(x);
+
+x:=A(A(Nil));
+foo(x)

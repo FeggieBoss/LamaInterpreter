@@ -1,0 +1,16 @@
+fun f() {
+  var x = 0;
+  var y = 1;
+  fun g(z) {
+    fun t() {
+        y
+    }
+    x := z+x+t();
+    x
+  }
+  var ret = g(1) + g(2);
+  write(x);
+  ret
+}
+
+write(f())

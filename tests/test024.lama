@@ -1,0 +1,40 @@
+fun foo(x) {
+  write(case x of
+      #str -> 0
+    | #array -> 1
+    | #sexp -> 2
+    | #fun -> 3
+    | #box -> 100
+    | #val -> 100
+  esac)
+}
+
+var x = "abc";
+foo(x);
+
+x:=[1,2,3];
+foo(x);
+
+x:=A(B(A(Nil)));
+foo(x);
+
+x:=fun (a) { a };
+foo(x);
+
+write(case 1 of
+    #str -> 0
+  | #array -> 0
+  | #sexp -> 0
+  | #fun -> 0
+  | #box -> 0
+  | #val -> 4
+esac);
+
+
+write(case x of
+    #str -> 0
+  | #array -> 0
+  | #sexp -> 0
+  | #val -> 0
+  | #box -> 5
+esac)

@@ -1,0 +1,35 @@
+write(case "abc" of
+    #str -> 0
+| #array -> 1
+| #sexp -> 2
+| #fun -> 3
+| #box -> 100
+| #val -> 100
+esac);
+
+write(case [1,2,3] of
+    #str -> 0
+| #array -> 1
+| #sexp -> 2
+| #fun -> 3
+| #box -> 100
+| #val -> 100
+esac);
+
+write(case A(B(A(Nil))) of
+    #str -> 0
+| #array -> 1
+| #sexp -> 2
+| #fun -> 3
+| #box -> 100
+| #val -> 100
+esac);
+
+write(case fun (a) { fun g() {a} g() } of
+    #str -> 0
+| #array -> 1
+| #sexp -> 2
+| #fun -> 3
+| #box -> 100
+| #val -> 100
+esac)
