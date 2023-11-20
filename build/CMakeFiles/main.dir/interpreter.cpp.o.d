@@ -1,5 +1,5 @@
 CMakeFiles/main.dir/interpreter.cpp.o: \
- /home/feggie/MyData/Virtualki/hw2/interpreter.cpp \
+ /home/feggie/MyData/Virtualki/hw2/LamaInterpreter/interpreter.cpp \
  /usr/include/stdc-predef.h /usr/include/string.h \
  /usr/include/bits/libc-header-start.h /usr/include/features.h \
  /usr/include/features-time64.h /usr/include/bits/wordsize.h \
@@ -156,7 +156,7 @@ CMakeFiles/main.dir/interpreter.cpp.o: \
  /usr/include/c++/11/deque /usr/include/c++/11/bits/stl_deque.h \
  /usr/include/c++/11/bits/deque.tcc /usr/include/c++/11/bits/stl_stack.h \
  /usr/include/c++/11/cstring \
- /home/feggie/MyData/Virtualki/hw2/runtime/runtime.h \
+ /home/feggie/MyData/Virtualki/hw2/LamaInterpreter/runtime/runtime.h \
  /usr/lib/gcc/x86_64-linux-gnu/11/include/limits.h \
  /usr/lib/gcc/x86_64-linux-gnu/11/include/syslimits.h \
  /usr/include/limits.h /usr/include/bits/posix1_lim.h \
@@ -166,4 +166,4 @@ CMakeFiles/main.dir/interpreter.cpp.o: \
  /usr/include/c++/11/stdlib.h /usr/include/sys/mman.h \
  /usr/include/bits/mman.h /usr/include/bits/mman-map-flags-generic.h \
  /usr/include/bits/mman-linux.h /usr/include/bits/mman-shared.h \
- /home/feggie/MyData/Virtualki/hw2/runtime/runtime_common.h
+ /home/feggie/MyData/Virtualki/hw2/LamaInterpreter/runtime/runtime_common.h

@@ -99,7 +99,7 @@ set(CMAKE_MAKEFILE_DEPENDS
   "/home/feggie/.local/lib/python3.10/site-packages/cmake/data/share/cmake-3.26/Modules/Platform/Linux-GNU.cmake"
   "/home/feggie/.local/lib/python3.10/site-packages/cmake/data/share/cmake-3.26/Modules/Platform/Linux.cmake"
   "/home/feggie/.local/lib/python3.10/site-packages/cmake/data/share/cmake-3.26/Modules/Platform/UnixPaths.cmake"
-  "/home/feggie/MyData/Virtualki/hw2/CMakeLists.txt"
+  "/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/CMakeLists.txt"
   "CMakeFiles/3.26.1/CMakeCCompiler.cmake"
   "CMakeFiles/3.26.1/CMakeCXXCompiler.cmake"
   "CMakeFiles/3.26.1/CMakeSystem.cmake"
