@@ -17,40 +17,27 @@ extern "C" {
 void *__start_custom_data;
 void *__stop_custom_data;
 
-struct Value;
-
-typedef unsigned char Byte;
 typedef int Number;
-typedef char* String;
-typedef Value* RefValue;
-struct Array {
-    unsigned int sz;
-    Value* ptr;
-};
-struct Sexp {
-    unsigned int sz;
-    const char *name;
-    Value *ptr;
-};
-struct Fun {
-  unsigned int addr;
-  unsigned int n;
-  Value *ptr;
-};
+typedef void* String;
+typedef void* Array;
+typedef void* Sexp;
+typedef void* Fun;
 
-struct Value {
-    Value() {
-      type = "Byte";
-    }
-    Byte byte;
-    Number number;
-    String string;
-    Array array;
-    Sexp sexp;
-    RefValue ref_value;
-    Fun fun;
-    const char* type;
-};
+typedef int Value;
+
+// struct Value {
+//     Value() {
+//       type = "Byte";
+//     }
+//     Byte byte;
+//     Number number;
+//     String string;
+//     Array array;
+//     Sexp sexp;
+//     RefValue ref_value;
+//     Fun fun;
+//     const char* type;
+// };
 
 class Stack {
 public:
@@ -63,6 +50,7 @@ public:
     global_ct = _global_ct;
     cp = sp = lp = fp = ptr = new char[mx_size];
     globals = new Value[_global_ct];
+    for(int i=0;i<_global_ct;++i) globals[i] = BOX(0);
   }
 
   void setup(const unsigned int args_ct, const unsigned int locals_ct, const unsigned int captured_ct = 0) {
@@ -89,7 +77,7 @@ public:
     // LOCALS
     lp = cur;
     for(unsigned int i=0;i<locals_ct;++i) { 
-      auto dop = Value();
+      auto dop = BOX(Value());
       memcpy(reinterpret_cast<void*>(cur), reinterpret_cast<void*>(&dop), sizeof(Value));
       cur += sizeof(Value);
     }
@@ -150,49 +138,56 @@ public:
 };
 
 void SET_VALUE(Value *v, Value &x) {
-  if(x.type == "RefValue") {
-      *v = *x.ref_value;
-  } else {
-      *v = x;
-  }
+  *v = x;
 }
 
-void debug_value(Value *const v) {
-  printf("type is %s, value : ", v->type);
-  
-  if(v->type=="Byte") {
-      printf("Byte=%u", (unsigned int)v->byte);
-  } else if (v->type=="Number") {
-      printf("Number=%d", v->number);
-  } else if (v->type=="String") {
-      printf("String=%s", v->string);
-  } else if (v->type=="Array") {
-      printf("Array=[");
-      for(int i=0;i<v->array.sz;++i) {
-          debug_value(v->array.ptr+i);
-          if(i!=v->array.sz-1) printf(" , ");
-      }
-      printf("]");
-  } else if (v->type=="Sexp") {
-      printf("Sexp(%s)=[", v->sexp.name);
-      for(int i=0;i<v->sexp.sz;++i) {
-          debug_value(v->sexp.ptr+i);
-          if(i!=v->sexp.sz-1) printf(" , ");
-      }
-      printf("]");
-  } else if (v->type=="RefValue") {
-      printf("(RefValue)");
-      debug_value(v->ref_value);
-  } else if (v->type=="Fun") {
-      printf("Fun(%d) Captured=[", v->fun.addr);
-      for(int i=0;i<v->fun.n;++i) {
-          debug_value(v->fun.ptr+i);
-          if(i!=v->fun.n-1) printf(" , ");
-      }
-      printf("]");
+void debug_value(Value *const val) {
+  Value v = *val;
+  if(UNBOXED(v)) {
+    printf("type is Number, value : %d", UNBOX(v));
   } else {
-      printf("ERROR\n");
-      exit(1);
+    data* vdata = TO_DATA(v);
+    switch (TAG(vdata->tag))
+    {
+      case STRING_TAG: {
+        printf("String=%s", (char*)v);
+        break;
+      }
+      case ARRAY_TAG: {
+        printf("Array=[");
+        int n = LEN(vdata->tag);
+        for(int i=0;i<n;++i) {
+            debug_value(reinterpret_cast<int*>(v)+i);
+            if(i!=n-1) printf(" , ");
+        }
+        printf("]");
+        break;
+      }
+      case SEXP_TAG: {
+        sexp* sexp_ = TO_SEXP(v);
+        printf("Sexp(%s)=[", de_hash(sexp_->tag));
+        int n = LEN(vdata->tag);
+        for(int i=0;i<n;++i) {
+            debug_value(reinterpret_cast<int*>(v)+i);
+            if(i!=n-1) printf(" , ");
+        }
+        printf("]");
+        break;
+      }
+      case CLOSURE_TAG: {
+        printf("Fun(0x%.8x) Captured=[", reinterpret_cast<int*>(v)[0]);
+        int n = LEN(vdata->tag);
+        for(int i=1;i<n;++i) {
+            debug_value(reinterpret_cast<int*>(v)+i);
+            if(i!=n-1) printf(" , ");
+        }
+        printf("]");
+        break;
+      }
+      default:{
+        break;
+      }
+    }
   }
 }
 
@@ -261,67 +256,41 @@ void debug_stack(const Stack &st) {
   }
 }
 
-Value POP_VALUE(Stack &st) {
+Value POP_UNBOXED(Stack &st) {
     Value v = st.top();
     st.pop();
-    if(v.type=="RefValue") v = *v.ref_value;
+    if (UNBOXED(v)) {
+      v = UNBOX(v);
+    } else {
+      printf("Error POP_UNBOXED: st.top() = %d\n", v);
+    }
     return v;
 }
 
-RefValue POP_REFVALUE(Stack &st) {
+Value POP_BOXED(Stack &st) {
     Value v = st.top();
     st.pop();
-    if(v.type!="RefValue") {
-        printf("ERROR POP_REFVALUE");
-        exit(1);
-    }
-    return v.ref_value;
-}
-
-void PUSH_BYTE(Stack &st, Byte b) {
-    st.push(Value());
-    st.top().type = "Byte";
-    st.top().byte = b;
+    return v;
 }
 
 void PUSH_NUMBER(Stack &st, Number n) {
-    st.push(Value());
-    st.top().type = "Number";
-    st.top().number = n;
+    st.push(BOX(n));
 }
 
 void PUSH_STRING(Stack &st, String s) {
-    st.push(Value());
-    st.top().type = "String";
-    st.top().string = s;
+    st.push((int)s);
 }
 
 void PUSH_ARRAY(Stack &st, Array a) {
-    st.push(Value());
-    st.top().type = "Array";
-    st.top().array = a;
+    st.push((int)a);
 }
 
 void PUSH_SEXP(Stack &st, Sexp s) {
-    st.push(Value());
-    st.top().type = "Sexp";
-    st.top().sexp = s;
-}
-
-void PUSH_REFVALUE(Stack &st, RefValue r) {
-    if(r->type=="RefValue") {
-      st.push(*r);
-    } else {
-      st.push(Value());
-      st.top().type = "RefValue";
-      st.top().ref_value = r;
-    }
+    st.push((int)s);
 }
 
 void PUSH_FUN(Stack &st, Fun fun) {
-    st.push(Value());
-    st.top().type = "Fun";
-    st.top().fun = fun;
+    st.push((int)fun);
 }
 
 /* The unpacked representation of bytecode file */
@@ -385,13 +354,13 @@ void parse(bytefile *bf, FILE *f = stdout) {
 # define FAIL   fprintf (stderr, "ERROR: invalid opcode %d-%d\n", h, l)
   
   Stack st = Stack(100000, bf->global_area_size);
-
+  
   st.setup(0, 0);
 
   PUSH_NUMBER(st, (bf->end_code_ptr - bf->code_ptr) - 1); // sizeof(STOP) = 1
 
-  st.push(Value());
-  st.push(Value());
+  PUSH_NUMBER(st, 80085);
+  PUSH_NUMBER(st, 555);
 
   char *ip = bf->code_ptr;
   do {
@@ -405,7 +374,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
     auto switch_lambda = [&st, &bf, &ip, h, l]() {
       static const char* ops [] = {"+", "-", "*", "/", "%", "<", "<=", ">", ">=", "==", "!=", "&&", "!!"};
-      static const char* pats[] = {"=str", "#str", "#array", "#sexp", "#box", "#val", "#fun"};
+      static const char* pats[] = {"=str", "#string", "#array", "#sexp", "#ref", "#val", "#fun"};
       static const char* lds [] = {"LD", "LDA", "ST"};
 
       switch (h) {
@@ -415,8 +384,8 @@ void parse(bytefile *bf, FILE *f = stdout) {
         
       case 0: { // BINOP
         Number b, a, c;
-        b = POP_VALUE(st).number;
-        a = POP_VALUE(st).number;
+        b = POP_UNBOXED(st);
+        a = POP_UNBOXED(st);
 
         switch (l) {
         case 1: { // +
@@ -426,37 +395,30 @@ void parse(bytefile *bf, FILE *f = stdout) {
         case 2: { // -
             c = a - b;
             break;
-
         }
         case 3: { // *
-            c = a * b;
+            c = a * b; 
             break;
-
         }
         case 4: { // /
             c = a / b;
             break;
-
         }
         case 5: { // %
             c = a % b;
             break;
-
         }
         case 6: { // <
             c = int(a < b);
             break;
-
         }
         case 7: { // <=
             c = int(a <= b);
             break;
-
         }
         case 8: { // >
             c = int(a > b);
             break;
-
         }
         case 9: { // >=
             c = int(a >= b);
@@ -469,17 +431,14 @@ void parse(bytefile *bf, FILE *f = stdout) {
         case 11: { // !=
             c = int(a != b);
             break;
-
         }
         case 12: { // &&
             c = int((a!=0) && (b!=0));
             break;
-
         }
         case 13: { // ||
             c = int((a!=0) || (b!=0));
             break;
-
         }
         
         default: FAIL;
@@ -501,7 +460,8 @@ void parse(bytefile *bf, FILE *f = stdout) {
           
         case  1: { // STRING
           char* s = STRING;
-          PUSH_STRING(st, s);
+          String str = Bstring___(s);
+          PUSH_STRING(st, str);
           return string_sprintf("STRING\t%s", s);
         }
                       
@@ -511,14 +471,15 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
           Value* ptr = new Value[n];
           for(int i=0;i<n;++i) {
-            ptr[n-i-1] = POP_VALUE(st);
+            ptr[n-i-1] = st.top(); st.pop();
+          }
+          Sexp s = Bsexp___(BOX(n+1), LtagHash(name));
+          
+          for(int i=0;i<n;++i) {
+            reinterpret_cast<int*>(s)[i] = ptr[i];
           }
 
-          Sexp sexp{};
-          sexp.name = name;
-          sexp.ptr = ptr;
-          sexp.sz = n;
-          PUSH_SEXP(st, sexp);
+          PUSH_SEXP(st, s);
 
           return string_sprintf("SEXP\t%s %d", name, n);
           //fprintf (f, "SEXP\t%s ", STRING);
@@ -527,36 +488,62 @@ void parse(bytefile *bf, FILE *f = stdout) {
         }
                     
         case  3: { // STI
-          Value v = POP_VALUE(st);
-          RefValue r = POP_REFVALUE(st);
-          SET_VALUE(r, v);
+          // Value v = POP_VALUE(st);
+          // RefValue r = POP_REFVALUE(st);
+          // SET_VALUE(r, v);
+          printf("STI bytecode not supported anymore");
+          exit(1);
           return std::string("STI");
         }
           
           
         case  4: { // STA
-          Value val = POP_VALUE(st);
-          int id = POP_VALUE(st).number;
-          Value v = POP_VALUE(st);
+          Value val = st.top(); st.pop();
+          int id = POP_UNBOXED(st);
+          Value v = POP_BOXED(st);
 
-          if(v.type=="String") {
-            String s = v.string;
-            s[id] = (char)val.number;
-            PUSH_NUMBER(st, Number(val.number));
-          } else if (v.type=="Array") {
-            Array a = v.array;
+          data* vdata = TO_DATA(v);
+          switch (TAG(vdata->tag))
+          {
+            case STRING_TAG: {
+              String s = (void*)v;
+              reinterpret_cast<char*>(v)[id] = UNBOX(val);
+              PUSH_NUMBER(st, Number(val));
+              break;
+            }
+            
+            case ARRAY_TAG: {
+              Array a = (void*)v;
 
-            if(a.sz <= id) {
-              printf("bad index %d >= %d\n", id, a.sz);
-              exit(1);
+              if(id >= LEN(vdata->tag)) {
+                printf("STA: bad index %d >= %d\n", id, LEN(vdata->tag));
+                exit(1);
+              }
+              
+              reinterpret_cast<int*>(a)[id] = val;
+              PUSH_NUMBER(st, val);
+              break;
             }
 
-            a.ptr[id] = val;
-            st.push(val);
-          } else {
-            printf("STA ERROR\n");
-            exit(1);
+            case SEXP_TAG: {
+              Sexp s = (void*)v;
+
+              if(id >= LEN(vdata->tag)) {
+                printf("STA: bad index %d >= %d\n", id, LEN(vdata->tag));
+                exit(1);
+              }
+
+              reinterpret_cast<int*>(s)[id] = val;
+              st.push(val);
+              break;
+            }
+
+            default: {
+              printf("STA ERROR\n");
+              exit(1);
+            }
           }
+          
           return std::string("STA");
         }
                     
@@ -573,10 +560,10 @@ void parse(bytefile *bf, FILE *f = stdout) {
           char *prev_fp = *reinterpret_cast<char**>(st.fp-sizeof(char*));
           char *prev_sp = *reinterpret_cast<char**>(st.fp);
 
-          auto ret = POP_VALUE(st);
+          auto ret = st.top(); st.pop();
 
           st.sp = st.cp + sizeof(Value);
-          int prev_ip = (int)st.top().number;  st.pop();
+          int prev_ip = POP_UNBOXED(st); st.pop();
 
           st.lp = prev_lp;
           st.fp = prev_fp;
@@ -590,14 +577,14 @@ void parse(bytefile *bf, FILE *f = stdout) {
           return std::string("END");
         }
                     
-        case  7: {// RET
+        case  7: { // RET
           printf("RET bytecode not supported anymore");
           exit(1);
           return std::string("RET");
         }
                     
         case  8: { // DROP
-          auto _ = POP_VALUE(st);
+          st.pop();
           return std::string("DROP");
         }
                     
@@ -615,62 +602,79 @@ void parse(bytefile *bf, FILE *f = stdout) {
         }
 
         case 11: { // ELEM
-          int id = POP_VALUE(st).number;
-          Value v = POP_VALUE(st);
+          int id = POP_UNBOXED(st);
+          Value v = POP_BOXED(st);
 
-          if(v.type=="String") {
-            String s = v.string;
-            PUSH_NUMBER(st, Number((int)*(s+id)));
-          } else if (v.type=="Array") {
-            Array a = v.array;
-            if(a.sz <= id) {
-              printf("bad index array %d >= %d\n", id, a.sz);
+          data* vdata = TO_DATA(v);
+          switch (TAG(vdata->tag))
+          {
+            case STRING_TAG: {
+              String s = (void*)v;
+              
+              PUSH_NUMBER(st, Number(reinterpret_cast<char*>(v)[id]));
+              break;
+            }
+            
+            case ARRAY_TAG: {
+              Array a = (void*)v;
+
+              if(id >= LEN(vdata->tag)) {
+                printf("ELEM: bad index %d >= %d\n", id, LEN(vdata->tag));
+                exit(1);
+              }
+
+              st.push(reinterpret_cast<int*>(a)[id]);
+              break;
+            }
+
+            case SEXP_TAG: {
+              Sexp s = (void*)v;
+
+              if(id >= LEN(vdata->tag)) {
+                printf("ELEM: bad index %d >= %d\n", id, LEN(vdata->tag));
+                exit(1);
+              }
+
+              st.push(reinterpret_cast<int*>(s)[id]);
+              break;
+            }
+
+            default: {
+              printf("ELEM ERROR\n");
               exit(1);
             }
-            PUSH_REFVALUE(st, &a.ptr[id]);
-          } else if (v.type=="Sexp") {
-            Sexp sexp = v.sexp;
-            if(sexp.sz <= id) {
-              printf("bad index sexp %d >= %d\n", id, sexp.sz);
-              exit(1);
-            }
-            PUSH_REFVALUE(st, &sexp.ptr[id]);
-          } else {
-            printf("ELEM ERROR\n");
-            exit(1);
           }
+
           return std::string("ELEM");
         }
-          
           
         default:
           FAIL;
         }
         
-        
       case 2: { // LD
         switch (l) {
             case 0: {
                 int x = INT;
-                PUSH_REFVALUE(st, (RefValue)&st.globals[x]);
+                st.push(st.globals[x]);
                 return string_sprintf("LD\tG(%d)", x);
             }
             
             case 1: { 
                 int x = INT;
-                PUSH_REFVALUE(st, (RefValue)st.get_loc(x));
+                st.push(*st.get_loc(x));
                 return string_sprintf("LD\tL(%d)", x);
             }
             
             case 2: {
                 int x = INT;
-                PUSH_REFVALUE(st, (RefValue)st.get_arg(x));
+                st.push(*st.get_arg(x));
                 return string_sprintf("LD\tA(%d)", x);
             }
             
             case 3: {
                 int x = INT;
-                PUSH_REFVALUE(st, (RefValue)st.get_cpt(x));
+                st.push(*st.get_cpt(x));
                 return string_sprintf("LD\tC(%d)", x);
             }
             
@@ -682,25 +686,25 @@ void parse(bytefile *bf, FILE *f = stdout) {
         switch (l) {
             case 0: {
                 int x = INT;
-                PUSH_REFVALUE(st, (RefValue)&st.globals[x]);
+                st.push(st.globals[x]);
                 return string_sprintf("LDA\tG(%d)", x);
             }
             
             case 1: {
                 int x = INT;
-                PUSH_REFVALUE(st, (RefValue)st.get_loc(x));
+                st.push(*st.get_loc(x));
                 return string_sprintf("LDA\tL(%d)", x);
             }
             
             case 2: {
                 int x = INT;
-                PUSH_REFVALUE(st, (RefValue)st.get_arg(x));
+                st.push(*st.get_arg(x));
                 return string_sprintf("LDA\tA(%d)", x);
             }
             
             case 3: {
                 int x = INT;
-                PUSH_REFVALUE(st, (RefValue)st.get_cpt(x));
+                st.push(*st.get_cpt(x));
                 return string_sprintf("LDA\tC(%d)", INT);
             }
             
@@ -712,32 +716,28 @@ void parse(bytefile *bf, FILE *f = stdout) {
         switch (l) {
             case 0: {
                 int x = INT;
-                Value v = POP_VALUE(st);
-                st.push(v);
+                Value v = st.top();
                 SET_VALUE(st.globals+x, v);
                 return string_sprintf("ST\tG(%d)", x);
             }
 
             case 1: {
                 int x = INT;
-                Value v = POP_VALUE(st);
-                st.push(v);
+                Value v = st.top();
                 SET_VALUE(st.get_loc(x), v);
                 return string_sprintf("ST\tL(%d)", x);
             }
             
             case 2: { 
                 int x = INT;
-                Value v = POP_VALUE(st);
-                st.push(v);
+                Value v = st.top();
                 SET_VALUE(st.get_arg(x), v);
                 return string_sprintf("ST\tA(%d)", x);
             }
             
             case 3: {
                 int x = INT;
-                Value v = POP_VALUE(st);
-                st.push(v);
+                Value v = st.top();
                 SET_VALUE(st.get_cpt(x), v);
                 return string_sprintf("ST\tC(%d)", x);
             }
@@ -746,12 +746,11 @@ void parse(bytefile *bf, FILE *f = stdout) {
         }
       }
         
-        
       case 5:
         switch (l) {
         case  0: { // CJMPz
           int addr = INT;
-          Number n = POP_VALUE(st).number;
+          Number n = POP_UNBOXED(st);
           if(n==0) {
             ip = bf->code_ptr + addr;
           }
@@ -760,7 +759,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
                     
         case  1: { // CJMPnz
           int addr = INT;
-          Number n = POP_VALUE(st).number;
+          Number n = POP_UNBOXED(st);
           if(n!=0) {
             ip = bf->code_ptr + addr;
           }
@@ -779,7 +778,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
         case  3: { // CBEGIN
           int args_ct = INT;
           int locals_ct = INT;
-          int n = (int)POP_VALUE(st).number;
+          int n = POP_UNBOXED(st);
 
           st.setup(args_ct, locals_ct, n);
 
@@ -792,37 +791,34 @@ void parse(bytefile *bf, FILE *f = stdout) {
           
           int n = INT;
 
-          Fun fun; 
-          fun.addr = addr;          
-          fun.n = n;
-          fun.ptr = new Value[n];
+          Fun fun = Bclosure___(BOX(n), (void*)addr);
 
           for (int i = 0; i<n; ++i) {
             switch (BYTE) {
               case 0: {
                 int x = INT;
-                fun.ptr[i] = st.globals[x];
+                reinterpret_cast<int*>(fun)[i+1] = st.globals[x];
 
                 s += string_sprintf(" G(%d)", x);
                 break;
               }
               case 1: { 
                 int x = INT;
-                fun.ptr[i] = *st.get_loc(x);
+                reinterpret_cast<int*>(fun)[i+1] = *st.get_loc(x);
 
                 s += string_sprintf(" L(%d)", x);
                 break;
               }
               case 2: {
                 int x = INT;
-                fun.ptr[i] = *st.get_arg(x);
+                reinterpret_cast<int*>(fun)[i+1] = *st.get_arg(x);
 
                 s += string_sprintf(" A(%d)", x);
                 break;
               }
               case 3: {
                 int x = INT;
-                fun.ptr[i] = *st.get_cpt(x);
+                reinterpret_cast<int*>(fun)[i+1] = *st.get_cpt(x);
 
                 s += string_sprintf(" C(%d)", x);
                 break;
@@ -830,7 +826,9 @@ void parse(bytefile *bf, FILE *f = stdout) {
               default: FAIL;
             }
           }
+
           PUSH_FUN(st, fun);
+
           return s;
         };
 
@@ -838,23 +836,25 @@ void parse(bytefile *bf, FILE *f = stdout) {
           int args_ct = INT;
 
           Value args[args_ct];
-          for(int i=0;i<args_ct;++i) {
-            args[i] = POP_VALUE(st);
+          for(unsigned int i=0;i<args_ct;++i) {
+            args[i] = st.top(); st.pop();
           }
 
-          Fun fun = POP_VALUE(st).fun;
+          Fun fun = (void*)st.top(); st.pop();
+          data* fundata = TO_DATA(fun);
           
           Number prev_ip = Number(ip-(bf->code_ptr));
-          ip = bf->code_ptr + fun.addr;
+          ip = bf->code_ptr + reinterpret_cast<int*>(fun)[0];
 
-          for(int i=0;i<fun.n;++i) {
-            st.push(fun.ptr[fun.n-i-1]);
+          unsigned int n = LEN(fundata->tag) - 1;
+          for(unsigned int i=0;i<n;++i) {
+            st.push(reinterpret_cast<int*>(fun)[n-i]);
           }
           PUSH_NUMBER(st, prev_ip);
-          for(int i=0;i<args_ct;++i) {
+          for(unsigned int i=0;i<args_ct;++i) {
             st.push(args[i]);
           }
-          if(fun.n) PUSH_NUMBER(st, fun.n);
+          if(n) PUSH_NUMBER (st, n);
 
           return string_sprintf("CALLC\t%d", args_ct);
         }
@@ -864,15 +864,15 @@ void parse(bytefile *bf, FILE *f = stdout) {
           int args_ct = INT;
 
           Value args[args_ct];
-          for(int i=0;i<args_ct;++i) {
-            args[i] = POP_VALUE(st);
+          for(unsigned int i=0;i<args_ct;++i) {
+            args[i] = st.top(); st.pop();
           }
           
           Number prev_ip = Number(ip-(bf->code_ptr));
           ip = bf->code_ptr + addr;
 
           PUSH_NUMBER(st, prev_ip);
-          for(int i=0;i<args_ct;++i) {
+          for(unsigned int i=0;i<args_ct;++i) {
             st.push(args[i]);
           }
 
@@ -883,9 +883,10 @@ void parse(bytefile *bf, FILE *f = stdout) {
           char* name = STRING;
           int n = INT;
 
-          Value v = POP_VALUE(st);
-          Sexp sexp = v.sexp;
-          PUSH_NUMBER(st, Number(int(v.type == "Sexp" && strcmp(name, sexp.name) == 0 && n == sexp.sz)));
+          Value v = st.top(); st.pop();
+          data* sdata = TO_DATA(v);
+          sexp* s = TO_SEXP(v);
+          PUSH_NUMBER(st, int(TAG(sdata->tag)==SEXP_TAG && LEN(sdata->tag) == n && s->tag == LtagHash(name)));
 
           return string_sprintf("TAG\t%s %d", name, n);
           
@@ -894,9 +895,9 @@ void parse(bytefile *bf, FILE *f = stdout) {
         case  8: { // ARRAY
           int n = INT;
 
-          Value v = POP_VALUE(st);
-          Array a = v.array;
-          PUSH_NUMBER(st, Number(int(v.type == "Array" && a.sz == n)));
+          Value v = st.top(); st.pop();
+          data* adata = TO_DATA(v);
+          PUSH_NUMBER(st, int(TAG(adata->tag) == ARRAY_TAG && LEN(adata->tag) == n));
 
           return string_sprintf("ARRAY\t%d", n);
         }
@@ -911,7 +912,6 @@ void parse(bytefile *bf, FILE *f = stdout) {
           return string_sprintf("LINE\t%d", INT);
         }
           
-
         default:
           FAIL;
         }
@@ -919,40 +919,40 @@ void parse(bytefile *bf, FILE *f = stdout) {
       case 6: { // PATT
         switch (l) {
           case 0: { // =str
-            String s2 = POP_VALUE(st).string;
-            Value v = POP_VALUE(st);
-            String s1 = v.string;
-            PUSH_NUMBER(st, Number(v.type == "String" && strcmp(s1,s2) == 0));
+            String s2 = (void*)st.top(); st.pop();
+            String s1 = (void*)st.top(); st.pop();
+            data* s1data = TO_DATA(s1); 
+            PUSH_NUMBER(st, Number(TAG(s1data->tag)==STRING_TAG && strcmp((char*)s1,(char*)s2) == 0));
             break;
           }
-          case 1: { // #str
-            Value v = POP_VALUE(st);
-            PUSH_NUMBER(st, Number(v.type == "String"));
+          case 1: { // #string
+            Value v = st.top(); st.pop();
+            PUSH_NUMBER(st, !UNBOXED(v) && TAG(TO_DATA(v)->tag)==STRING_TAG);
             break;
           }
           case 2: { // #array
-            Value v = POP_VALUE(st);
-            PUSH_NUMBER(st, Number(v.type == "Array"));
+            Value v = st.top(); st.pop();
+            PUSH_NUMBER(st, !UNBOXED(v) && TAG(TO_DATA(v)->tag)==ARRAY_TAG);
             break;
           }
           case 3: { // #sexp
-            Value v = POP_VALUE(st);
-            PUSH_NUMBER(st, Number(v.type == "Sexp"));
+            Value v = st.top(); st.pop();
+            PUSH_NUMBER(st, !UNBOXED(v) && TAG(TO_DATA(v)->tag)==SEXP_TAG);
             break;
           }
-          case 4: { // #box
+          case 4: { // #ref
             Value v = st.top(); st.pop();
-            PUSH_NUMBER(st, Number(v.type == "RefValue"));
+            PUSH_NUMBER(st, !UNBOXED(v));
             break;
           }
           case 5: { // #val
             Value v = st.top(); st.pop();
-            PUSH_NUMBER(st, Number(v.type != "RefValue"));
+            PUSH_NUMBER(st, UNBOXED(v));
             break;
           }
           case 6: { // #fun
-            Value v = POP_VALUE(st);
-            PUSH_NUMBER(st, Number(v.type == "Fun"));
+            Value v = st.top(); st.pop();
+            PUSH_NUMBER(st, !UNBOXED(v) && TAG(TO_DATA(v)->tag)==CLOSURE_TAG);
             break;
           }
           default: {
@@ -975,7 +975,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
         }
                     
         case 1: { // WRITE
-          Number n = POP_VALUE(st).number;
+          Number n = POP_UNBOXED(st);
           PUSH_NUMBER(st, n);
           fprintf(stdout, "\n[stdout]%d\n\n", (int)n);
 
@@ -983,20 +983,9 @@ void parse(bytefile *bf, FILE *f = stdout) {
         }
 
         case 2: { // Llength
-          Value v = POP_VALUE(st);
+          data* vdata = TO_DATA(POP_BOXED(st));
 
-          int sz = 0;
-          if (v.type=="String") {
-            sz = strlen(v.string);
-          } else if (v.type=="Array") {
-            sz = v.array.sz;
-          } else if (v.type=="Sexp") {
-            sz = v.sexp.sz; 
-          } else {
-            printf("Llength ERROR\n");
-            exit(1);
-          }
-
+          int sz = LEN(vdata->tag);
           PUSH_NUMBER(st, Number(sz));
 
           return std::string("CALL\tLlength");
@@ -1009,14 +998,17 @@ void parse(bytefile *bf, FILE *f = stdout) {
         case 4: { // Barray
           int n = INT;
           Value* ptr = new Value[n];
-          for(int i=0;i<n;++i) {
-            ptr[n-i-1] = POP_VALUE(st);
+          for(unsigned int i=0;i<n;++i) {
+            ptr[n-i-1] = st.top(); st.pop();
           }
           
-          Array a{};
-          a.ptr = ptr;
-          a.sz = n;
+          Array a = (void*)Barray___(BOX(n));
+          for(unsigned int i=0;i<n;++i) {
+            reinterpret_cast<int*>(a)[i] = ptr[i];
+          }
+
           PUSH_ARRAY(st, a);
+
           return string_sprintf("CALL\tBarray %d", n);
         }
           

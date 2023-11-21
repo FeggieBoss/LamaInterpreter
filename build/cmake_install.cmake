@@ -50,5 +50,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/build2/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/build/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

@@ -1,3 +1,3 @@
-/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/build2/CMakeFiles/main.dir
-/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/build2/CMakeFiles/edit_cache.dir
-/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/build2/CMakeFiles/rebuild_cache.dir
+/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/build/CMakeFiles/main.dir
+/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/build/CMakeFiles/edit_cache.dir
+/home/feggie/MyData/Virtualki/hw2/LamaInterpreter/build/CMakeFiles/rebuild_cache.dir
