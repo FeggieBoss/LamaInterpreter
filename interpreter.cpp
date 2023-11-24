@@ -498,48 +498,55 @@ void parse(bytefile *bf, FILE *f = stdout) {
           
         case  4: { // STA
           Value val = st.top(); st.pop();
-          int id = POP_UNBOXED(st);
-          Value v = POP_BOXED(st);
+          Value id = st.top(); st.pop();
 
-          data* vdata = TO_DATA(v);
-          switch (TAG(vdata->tag))
-          {
-            case STRING_TAG: {
-              String s = (void*)v;
-              reinterpret_cast<char*>(v)[id] = UNBOX(val);
-              PUSH_NUMBER(st, Number(val));
-              break;
-            }
-            
-            case ARRAY_TAG: {
-              Array a = (void*)v;
+          if(!UNBOXED(id)) { // UNBOXED v
+            *reinterpret_cast<int*>(id) = val;
+            st.push(val);
+          } else { // BOXED v
+            id = UNBOX(id);
+            Value v = st.top(); st.pop();
 
-              if(id >= LEN(vdata->tag)) {
-                printf("STA: bad index %d >= %d\n", id, LEN(vdata->tag));
-                exit(1);
+            data* vdata = TO_DATA(v);
+            switch (TAG(vdata->tag))
+            {
+              case STRING_TAG: {
+                String s = (void*)v;
+                reinterpret_cast<char*>(v)[id] = UNBOX(val);
+                PUSH_NUMBER(st, Number(val));
+                break;
               }
               
-              reinterpret_cast<int*>(a)[id] = val;
-              PUSH_NUMBER(st, val);
-              break;
-            }
+              case ARRAY_TAG: {
+                Array a = (void*)v;
 
-            case SEXP_TAG: {
-              Sexp s = (void*)v;
-
-              if(id >= LEN(vdata->tag)) {
-                printf("STA: bad index %d >= %d\n", id, LEN(vdata->tag));
-                exit(1);
+                if(id >= LEN(vdata->tag)) {
+                  printf("STA: bad index %d >= %d\n", id, LEN(vdata->tag));
+                  exit(1);
+                }
+                
+                reinterpret_cast<int*>(a)[id] = val;
+                PUSH_NUMBER(st, val);
+                break;
               }
 
-              reinterpret_cast<int*>(s)[id] = val;
-              st.push(val);
-              break;
-            }
+              case SEXP_TAG: {
+                Sexp s = (void*)v;
 
-            default: {
-              printf("STA ERROR\n");
-              exit(1);
+                if(id >= LEN(vdata->tag)) {
+                  printf("STA: bad index %d >= %d\n", id, LEN(vdata->tag));
+                  exit(1);
+                }
+
+                reinterpret_cast<int*>(s)[id] = val;
+                st.push(val);
+                break;
+              }
+
+              default: {
+                printf("STA ERROR\n");
+                exit(1);
+              }
             }
           }
           
@@ -682,33 +689,47 @@ void parse(bytefile *bf, FILE *f = stdout) {
       }
   
       case 3: { // LDA 
+        std::string s;
+        Value* v;
         switch (l) {
             case 0: {
                 int x = INT;
-                st.push(st.globals[x]);
-                return string_sprintf("LDA\tG(%d)", x);
+                v = (&st.globals[x]);
+                s = string_sprintf("LDA\tG(%d)", x);
+                break;
             }
             
             case 1: {
                 int x = INT;
-                st.push(*st.get_loc(x));
-                return string_sprintf("LDA\tL(%d)", x);
+                v = (st.get_loc(x));
+                s = string_sprintf("LDA\tL(%d)", x);
+                break;
             }
             
             case 2: {
                 int x = INT;
-                st.push(*st.get_arg(x));
-                return string_sprintf("LDA\tA(%d)", x);
+                v = (st.get_arg(x));
+                s = string_sprintf("LDA\tA(%d)", x);
+                break;
             }
             
             case 3: {
                 int x = INT;
-                st.push(*st.get_cpt(x));
-                return string_sprintf("LDA\tC(%d)", INT);
+                v = (st.get_cpt(x));
+                s = string_sprintf("LDA\tC(%d)", INT);
+                break;
             }
             
             default: FAIL;
         }
+
+        if(UNBOXED(*v)) {
+          st.push(int(v));
+        } else {
+          st.push(*v);
+        }
+
+        return s;
       }
   
       case 4: { // ST
