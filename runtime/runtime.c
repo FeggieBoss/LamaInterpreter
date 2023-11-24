@@ -871,14 +871,13 @@ extern void* LmakeString (int length) {
 
   ASSERT_UNBOXED("makeString", length);
   
-  //__pre_gc () ;
+  __pre_gc () ;
   
-  //r = (data*) alloc (n + 1 + sizeof (int));
-  r = (data*) malloc (n + 1 + sizeof (int));
+  r = (data*) alloc (n + 1 + sizeof (int));
 
   r->tag = STRING_TAG | (n << 3);
 
-  //__post_gc();
+  __post_gc();
   
   return r->contents;
 }
@@ -887,15 +886,15 @@ extern void* Bstring___ (void *p) {
   int   n = strlen (p);
   void *s = NULL;
   
-  //__pre_gc ();
+  __pre_gc ();
 #ifdef DEBUG_PRINT
   indent++; print_indent ();
   printf ("Bstring: call LmakeString %s %p %p %p %i\n", p, &p, p, s, n);
   fflush(stdout);
 #endif
-  //push_extra_root (&p);
+  push_extra_root (&p);
   s = LmakeString (BOX(n));  
-  //pop_extra_root(&p);
+  pop_extra_root(&p);
 #ifdef DEBUG_PRINT
   print_indent ();
   printf ("\tBstring: call strncpy: %p %p %p %i\n", &p, p, s, n); fflush(stdout);
@@ -906,7 +905,7 @@ extern void* Bstring___ (void *p) {
   printf ("\tBstring: ends\n"); fflush(stdout);
   indent--;
 #endif
-  //__post_gc ();
+  __post_gc ();
   
   return s;
 }
@@ -980,43 +979,33 @@ extern void* Bstringval (void *p) {
 }
 
 extern void* Bclosure___ (int bn, void *entry) {
-  //va_list args; 
   int     i, ai;
-  //register int * ebp asm ("ebp");
-  //size_t  *argss;
+  register int * ebp asm ("ebp");
+  size_t  *argss;
   data    *r; 
   int     n = UNBOX(bn);
   
-  //__pre_gc ();
+  __pre_gc ();
 #ifdef DEBUG_PRINT
   indent++; print_indent ();
   printf ("Bclosure: create n = %d\n", n); fflush(stdout);
 #endif
-  //argss = (ebp + 12);
-  // for (i = 0; i<n; i++, argss++) {
-  //   push_extra_root ((void**)argss);
-  // }
+  argss = (ebp + 12);
+  for (i = 0; i<n; i++, argss++) {
+    push_extra_root ((void**)argss);
+  }
 
-  r = (data*) malloc (sizeof(int) * (n+2));
+  r = (data*) alloc (sizeof(int) * (n+2));
   
   r->tag = CLOSURE_TAG | ((n + 1) << 3);
   ((void**) r->contents)[0] = entry;
   
-  //va_start(args, entry);
-  
-  // for (i = 0; i<n; i++) {
-  //   ai = va_arg(args, int);
-  //   ((int*)r->contents)[i+1] = ai;
-  // }
-  
-  //va_end(args);
+  __post_gc();
 
-  //__post_gc();
-
-  //argss--;
-  // for (i = 0; i<n; i++, argss--) {
-  //   pop_extra_root ((void**)argss);
-  // }
+  argss--;
+  for (i = 0; i<n; i++, argss--) {
+    pop_extra_root ((void**)argss);
+  }
 
 #ifdef DEBUG_PRINT
   print_indent ();
@@ -1081,26 +1070,17 @@ extern void* Barray___ (int bn) {
   data    *r; 
   int     n = UNBOX(bn);
     
-  //__pre_gc ();
+  __pre_gc ();
   
 #ifdef DEBUG_PRINT
   indent++; print_indent ();
   printf ("Barray: create n = %d\n", n); fflush(stdout);
 #endif
-  r = (data*) malloc (sizeof(int) * (n+1));
+  r = (data*) alloc (sizeof(int) * (n+1));
 
   r->tag = ARRAY_TAG | (n << 3);
-  
-  //va_start(args, bn);
-  
-  // for (i = 0; i<n; i++) {
-  //   ai = va_arg(args, int);
-  //   ((int*)r->contents)[i] = ai;
-  // }
-  
-  //va_end(args);
 
-  //__post_gc();
+  __post_gc();
 #ifdef DEBUG_PRINT
   indent--;
 #endif
@@ -1148,28 +1128,18 @@ extern void* Bsexp___(int bn, int tag) {
   data   *d;  
   int n = UNBOX(bn); 
 
-  //__pre_gc () ;
+  __pre_gc () ;
   
 #ifdef DEBUG_PRINT
   indent++; print_indent ();
   printf("Bsexp: allocate %zu!\n",sizeof(int) * (n+1)); fflush (stdout);
 #endif
-  r = (sexp*) malloc (sizeof(int) * (n+1));
+  r = (sexp*) alloc (sizeof(int) * (n+1));
   d = &(r->contents);
   r->tag = 0;
     
   d->tag = SEXP_TAG | ((n-1) << 3);
-  
-  //va_start(args, bn);
-  
-  // for (i=0; i<n-1; i++) {
-  //   ai = va_arg(args, int);
-    
-  //   p = (size_t*) ai;
-  //   ((int*)d->contents)[i] = ai;
-  // }
 
-  //r->tag = UNBOX(va_arg(args, int));
   r->tag = tag;
 
 #ifdef DEBUG_PRINT
@@ -1179,9 +1149,7 @@ extern void* Bsexp___(int bn, int tag) {
   indent--;
 #endif
 
-  //va_end(args);
-
-  //__post_gc();
+  __post_gc();
 
   return d->contents;
 }

@@ -44,15 +44,22 @@ typedef struct {
   data contents; 
 } sexp;
 
+extern size_t __gc_stack_top, __gc_stack_bottom;
+
 extern void* alloc    (size_t);
 extern void* Bsexp    (int n, ...);
 extern int   LtagHash (char*);
 char* de_hash (int n);
 
-extern void* Bsexp    (int n, ...);
 extern void* Bsexp___(int bn, int tag);
 extern void* Bstring___(void *p);
 extern void* Bclosure___(int bn, void *entry);
 extern void* Barray___(int bn);
+
+extern void Bmatch_failure(void *v, char *fname, int line, int col);
+extern void* Bstringval (void *p);
+
+
+extern void __gc_root_scan_stack ();
 
 #endif

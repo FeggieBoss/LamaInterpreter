@@ -17,6 +17,8 @@ extern "C" {
 void *__start_custom_data;
 void *__stop_custom_data;
 
+//#define DEBUG
+
 typedef int Number;
 typedef void* String;
 typedef void* Array;
@@ -46,11 +48,22 @@ public:
   char *ptr;
   char *sp, *lp, *fp, *cp;
 
-  Stack(const unsigned int mx_size, const unsigned int _global_ct) {
+  Stack(const unsigned int mx_size_, const unsigned int _global_ct) {
+    mx_size = mx_size_;
     global_ct = _global_ct;
-    cp = sp = lp = fp = ptr = new char[mx_size];
-    globals = new Value[_global_ct];
+
+    ptr = new char[mx_size_ + _global_ct*sizeof(Value)];
+    globals = reinterpret_cast<Value*>(ptr);
     for(int i=0;i<_global_ct;++i) globals[i] = BOX(0);
+
+    cp = sp = lp = fp = ptr + sizeof(Value) * global_ct;
+
+    __gc_stack_top = (size_t)(ptr-sizeof(Value));
+    __gc_stack_bottom = (size_t)ptr;
+  }
+
+  ~Stack() {
+    delete[] ptr;
   }
 
   void setup(const unsigned int args_ct, const unsigned int locals_ct, const unsigned int captured_ct = 0) {
@@ -97,14 +110,15 @@ public:
     cur += sizeof(char*);
     
     sp = cur;
-  }
 
-  ~Stack() {
-    delete[] ptr;
-    delete[] globals;
+    __gc_stack_bottom = (size_t)(sp+sizeof(Value));
   }
 
   Value& top() {
+    if(sp==fp+sizeof(char*)) {
+      std::cerr<<"Unexpected stack.top(): stack is empty\n";
+      exit(1);
+    }
     return *reinterpret_cast<Value*>(sp-sizeof(Value));
   }
 
@@ -121,20 +135,37 @@ public:
   }
 
   void push(Value &&v) {
+    if(sp+sizeof(Value)>=ptr+mx_size) {
+      std::cerr<<"Unexpected stack.push(): no more space reserved\n";
+      exit(1);
+    }
     auto dop = v;
     memcpy(reinterpret_cast<void*>(sp), reinterpret_cast<void*>(&dop), sizeof(Value));
     sp += sizeof(Value);
+    __gc_stack_bottom = (size_t)(sp+sizeof(Value));
   }
 
   void push(Value &v) {
+    if(sp+sizeof(Value)>=ptr+mx_size) {
+      std::cerr<<"Unexpected stack.push(): no more space reserved\n";
+      exit(1);
+    }
     auto dop = v;
     memcpy(reinterpret_cast<void*>(sp), reinterpret_cast<void*>(&dop), sizeof(Value));
     sp += sizeof(Value);
+    __gc_stack_bottom = (size_t)(sp+sizeof(Value));
   }
 
   void pop(unsigned int _sizeof = sizeof(Value)) {
+    if(sp==fp+sizeof(char*)) {
+      std::cerr<<"Unexpected stack.pop(): stack is empty\n";
+      exit(1);
+    }
     sp-=_sizeof;
+    __gc_stack_bottom = (size_t)(sp+sizeof(Value));
   }
+private:
+  unsigned int mx_size;
 };
 
 void SET_VALUE(Value *v, Value &x) {
@@ -204,7 +235,7 @@ void debug_stack(const Stack &st) {
   char *sp=st.sp,*lp=st.lp,*fp=st.fp, *cp=st.cp;
 
   char *prev_fp = nullptr, *prev_sp = nullptr, *prev_lp = nullptr, *prev_cp = nullptr;
-  while(prev_fp != st.ptr) {
+  while(prev_fp != st.ptr + sizeof(Value) * st.global_ct) {
     prev_cp = *reinterpret_cast<char**>(fp-3*sizeof(char*));
     prev_lp = *reinterpret_cast<char**>(fp-2*sizeof(char*));
     prev_fp = *reinterpret_cast<char**>(fp-sizeof(char*));
@@ -328,7 +359,6 @@ void read_file (char *name, bytefile &bf) {
   bf.string_ptr  = &bf.buffer [bf.public_symbols_number * 2 * sizeof(int)];
   bf.public_ptr  = (int*) bf.buffer;
   bf.code_ptr    = &bf.string_ptr [bf.stringtab_size];
-  bf.global_ptr  = new int[bf.global_area_size];
   bf.end_code_ptr = bf.buffer + size;
 
   f.close();
@@ -347,7 +377,7 @@ std::string string_sprintf(const char* format, Args... args ) {
   return str;
 }
 
-void parse(bytefile *bf, FILE *f = stdout) {
+void parse(bytefile *bf, char* fname) {
 # define INT    (ip += sizeof (int), *(int*)(ip - sizeof (int)))
 # define BYTE   *ip++
 # define STRING get_string (bf, INT)
@@ -368,18 +398,27 @@ void parse(bytefile *bf, FILE *f = stdout) {
          h = (x & 0xF0) >> 4,
          l = x & 0x0F;
 
-                        int ______;
-                        //fscanf(stdin, "%d", &______);
-    //fprintf (f, "0x%.8x:\t", ip-bf->code_ptr-1);
+    #ifdef DEBUG_WAIT_ON_STEP
+      int ______;
+      fscanf(stdin, "%d", &______);
+    #endif
 
-    auto switch_lambda = [&st, &bf, &ip, h, l]() {
+    #ifdef DEBUG
+      printf("0x%.8x:\t", ip-bf->code_ptr-1);
+    #endif
+
+    auto switch_lambda = [&st, &bf, &ip, fname, h, l]() {
       static const char* ops [] = {"+", "-", "*", "/", "%", "<", "<=", ">", ">=", "==", "!=", "&&", "!!"};
       static const char* pats[] = {"=str", "#string", "#array", "#sexp", "#ref", "#val", "#fun"};
       static const char* lds [] = {"LD", "LDA", "ST"};
 
       switch (h) {
       case 15: { // STOP
-        return std::string("STOP");
+        #ifndef DEBUG
+          return 0;
+        #else 
+          return std::string("STOP");
+        #endif
       }
         
       case 0: { // BINOP
@@ -446,7 +485,11 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
         PUSH_NUMBER(st, c);
 
-        return string_sprintf("BINOP\t%s", ops[l-1]);
+        #ifndef DEBUG
+          return 0;
+        #else 
+          return string_sprintf("BINOP\t%s", ops[l-1]);
+        #endif
       }
         
       case 1:
@@ -454,15 +497,22 @@ void parse(bytefile *bf, FILE *f = stdout) {
         case  0: { // CONST
           Number n = INT;
           PUSH_NUMBER(st, n);
-          return string_sprintf("CONST\t%d", (int)n);
-          //fprintf (f, "CONST\t%d", INT);
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("CONST\t%d", (int)n);
+          #endif
         }          
           
         case  1: { // STRING
           char* s = STRING;
           String str = Bstring___(s);
           PUSH_STRING(st, str);
-          return string_sprintf("STRING\t%s", s);
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("STRING\t%s", s);
+          #endif
         }
                       
         case  2: { // SEXP
@@ -473,7 +523,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
           for(int i=0;i<n;++i) {
             ptr[n-i-1] = st.top(); st.pop();
           }
-          Sexp s = Bsexp___(BOX(n+1), LtagHash(name));
+          Sexp s = Bsexp___(BOX(n+1), UNBOX(LtagHash(name)));
           
           for(int i=0;i<n;++i) {
             reinterpret_cast<int*>(s)[i] = ptr[i];
@@ -481,10 +531,11 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
           PUSH_SEXP(st, s);
 
-          return string_sprintf("SEXP\t%s %d", name, n);
-          //fprintf (f, "SEXP\t%s ", STRING);
-          //fprintf (f, "%d", INT);
-          
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("SEXP\t%s %d", name, n);
+          #endif
         }
                     
         case  3: { // STI
@@ -493,7 +544,11 @@ void parse(bytefile *bf, FILE *f = stdout) {
           // SET_VALUE(r, v);
           printf("STI bytecode not supported anymore");
           exit(1);
-          return std::string("STI");
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("STI");
+          #endif
         }
           
         case  4: { // STA
@@ -550,14 +605,22 @@ void parse(bytefile *bf, FILE *f = stdout) {
             }
           }
           
-          return std::string("STA");
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("STA");
+          #endif
         }
                     
         case  5: { // JMP
           int addr = INT;
           ip = bf->code_ptr + addr;
-          return string_sprintf("JMP\t0x%.8x", addr);
-          //fprintf (f, "JMP\t0x%.8x", INT);
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("JMP\t0x%.8x", addr);
+          #endif
         }
                     
         case  6: { // END
@@ -576,27 +639,50 @@ void parse(bytefile *bf, FILE *f = stdout) {
           st.sp = prev_sp;
           st.cp = prev_cp;
 
+          // shrinking stack
+          __gc_stack_bottom = (size_t)(st.sp+sizeof(Value));
+
           ip = bf->code_ptr + prev_ip;
 
           st.push(ret);
 
-          return std::string("END");
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("END");
+          #endif
         }
                     
         case  7: { // RET
           printf("RET bytecode not supported anymore");
           exit(1);
-          return std::string("RET");
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("RET");
+          #endif
         }
                     
         case  8: { // DROP
           st.pop();
-          return std::string("DROP");
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("DROP");
+          #endif
         }
                     
         case  9: { // DUP
           st.push(st.top());
-          return std::string("DUP");
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("DUP");
+          #endif
         }
           
         case 10: { // SWAP
@@ -604,7 +690,13 @@ void parse(bytefile *bf, FILE *f = stdout) {
           auto b = st.top(); st.pop();
           st.push(a);
           st.push(b);
-          return std::string("SWAP");
+
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("SWAP");
+          #endif
         }
 
         case 11: { // ELEM
@@ -651,7 +743,12 @@ void parse(bytefile *bf, FILE *f = stdout) {
             }
           }
 
-          return std::string("ELEM");
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("ELEM");
+          #endif
         }
           
         default:
@@ -663,25 +760,47 @@ void parse(bytefile *bf, FILE *f = stdout) {
             case 0: {
                 int x = INT;
                 st.push(st.globals[x]);
-                return string_sprintf("LD\tG(%d)", x);
+
+                #ifndef DEBUG
+                  return 0;
+                #else 
+                  return string_sprintf("LD\tG(%d)", x);
+                #endif
             }
             
             case 1: { 
                 int x = INT;
                 st.push(*st.get_loc(x));
-                return string_sprintf("LD\tL(%d)", x);
+
+
+                #ifndef DEBUG
+                  return 0;
+                #else 
+                  return string_sprintf("LD\tL(%d)", x);
+                #endif
             }
             
             case 2: {
                 int x = INT;
                 st.push(*st.get_arg(x));
-                return string_sprintf("LD\tA(%d)", x);
+
+                #ifndef DEBUG
+                  return 0;
+                #else 
+                  return string_sprintf("LD\tA(%d)", x);
+                #endif
             }
             
             case 3: {
                 int x = INT;
                 st.push(*st.get_cpt(x));
-                return string_sprintf("LD\tC(%d)", x);
+
+
+                #ifndef DEBUG
+                  return 0;
+                #else 
+                  return string_sprintf("LD\tC(%d)", x);
+                #endif
             }
             
             default: FAIL;
@@ -689,34 +808,44 @@ void parse(bytefile *bf, FILE *f = stdout) {
       }
   
       case 3: { // LDA 
-        std::string s;
+        #ifdef DEBUG
+          std::string s;
+        #endif
         Value* v;
         switch (l) {
             case 0: {
                 int x = INT;
                 v = (&st.globals[x]);
-                s = string_sprintf("LDA\tG(%d)", x);
+                #ifdef DEBUG
+                  s = string_sprintf("LDA\tG(%d)", x);
+                #endif
                 break;
             }
             
             case 1: {
                 int x = INT;
                 v = (st.get_loc(x));
-                s = string_sprintf("LDA\tL(%d)", x);
+                #ifdef DEBUG
+                  s = string_sprintf("LDA\tL(%d)", x);
+                #endif
                 break;
             }
             
             case 2: {
                 int x = INT;
                 v = (st.get_arg(x));
-                s = string_sprintf("LDA\tA(%d)", x);
+                #ifdef DEBUG
+                  s = string_sprintf("LDA\tA(%d)", x);
+                #endif
                 break;
             }
             
             case 3: {
                 int x = INT;
                 v = (st.get_cpt(x));
-                s = string_sprintf("LDA\tC(%d)", INT);
+                #ifdef DEBUG
+                  s = string_sprintf("LDA\tC(%d)", INT);
+                #endif
                 break;
             }
             
@@ -729,7 +858,12 @@ void parse(bytefile *bf, FILE *f = stdout) {
           st.push(*v);
         }
 
-        return s;
+
+        #ifndef DEBUG
+          return 0;
+        #else 
+          return s;
+        #endif
       }
   
       case 4: { // ST
@@ -738,28 +872,51 @@ void parse(bytefile *bf, FILE *f = stdout) {
                 int x = INT;
                 Value v = st.top();
                 SET_VALUE(st.globals+x, v);
-                return string_sprintf("ST\tG(%d)", x);
+                
+                #ifndef DEBUG
+                  return 0;
+                #else 
+                  return string_sprintf("ST\tG(%d)", x);
+                #endif
             }
 
             case 1: {
                 int x = INT;
                 Value v = st.top();
                 SET_VALUE(st.get_loc(x), v);
-                return string_sprintf("ST\tL(%d)", x);
+
+
+                #ifndef DEBUG
+                  return 0;
+                #else 
+                  return string_sprintf("ST\tL(%d)", x);
+                #endif
             }
             
             case 2: { 
                 int x = INT;
                 Value v = st.top();
                 SET_VALUE(st.get_arg(x), v);
-                return string_sprintf("ST\tA(%d)", x);
+
+
+                #ifndef DEBUG
+                  return 0;
+                #else 
+                  return string_sprintf("ST\tA(%d)", x);
+                #endif
             }
             
             case 3: {
                 int x = INT;
                 Value v = st.top();
                 SET_VALUE(st.get_cpt(x), v);
-                return string_sprintf("ST\tC(%d)", x);
+
+
+                #ifndef DEBUG
+                  return 0;
+                #else 
+                  return string_sprintf("ST\tC(%d)", x);
+                #endif
             }
             
             default: FAIL;
@@ -774,7 +931,12 @@ void parse(bytefile *bf, FILE *f = stdout) {
           if(n==0) {
             ip = bf->code_ptr + addr;
           }
-          return string_sprintf("CJMPz\t0x%.8x", addr);
+          
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("CJMPz\t0x%.8x", addr);
+          #endif
         }
                     
         case  1: { // CJMPnz
@@ -783,7 +945,12 @@ void parse(bytefile *bf, FILE *f = stdout) {
           if(n!=0) {
             ip = bf->code_ptr + addr;
           }
-          return string_sprintf("CJMPnz\t0x%.8x", addr);
+
+          #ifndef DEBUG
+            return 0;
+          #else
+            return string_sprintf("CJMPnz\t0x%.8x", addr); 
+          #endif
         }
                     
         case  2: { // BEGIN
@@ -792,7 +959,11 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
           st.setup(args_ct, locals_ct);
 
-          return string_sprintf("BEGIN\t%d %d", args_ct, locals_ct);          
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("BEGIN\t%d %d", args_ct, locals_ct);    
+          #endif      
         }
           
         case  3: { // CBEGIN
@@ -802,12 +973,19 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
           st.setup(args_ct, locals_ct, n);
 
-          return string_sprintf("CBEGIN\t%d %d", args_ct, locals_ct);          
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("CBEGIN\t%d %d", args_ct, locals_ct); 
+          #endif         
         }
           
         case  4: { // CLOSURE 
           int addr = INT;
-          std::string s = string_sprintf("CLOSURE\t0x%.8x", addr);
+
+          #ifdef DEBUG
+            std::string s = string_sprintf("CLOSURE\t0x%.8x", addr);
+          #endif
           
           int n = INT;
 
@@ -819,28 +997,36 @@ void parse(bytefile *bf, FILE *f = stdout) {
                 int x = INT;
                 reinterpret_cast<int*>(fun)[i+1] = st.globals[x];
 
-                s += string_sprintf(" G(%d)", x);
+                #ifdef DEBUG
+                  s += string_sprintf(" G(%d)", x);
+                #endif
                 break;
               }
               case 1: { 
                 int x = INT;
                 reinterpret_cast<int*>(fun)[i+1] = *st.get_loc(x);
 
-                s += string_sprintf(" L(%d)", x);
+                #ifdef DEBUG
+                  s += string_sprintf(" L(%d)", x);
+                #endif
                 break;
               }
               case 2: {
                 int x = INT;
                 reinterpret_cast<int*>(fun)[i+1] = *st.get_arg(x);
-
-                s += string_sprintf(" A(%d)", x);
+                
+                #ifdef DEBUG
+                  s += string_sprintf(" A(%d)", x);
+                #endif
                 break;
               }
               case 3: {
                 int x = INT;
                 reinterpret_cast<int*>(fun)[i+1] = *st.get_cpt(x);
 
-                s += string_sprintf(" C(%d)", x);
+                #ifdef DEBUG
+                  s += string_sprintf(" C(%d)", x);
+                #endif
                 break;
               }
               default: FAIL;
@@ -849,7 +1035,12 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
           PUSH_FUN(st, fun);
 
-          return s;
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return s;
+          #endif
         };
 
         case  5: { // CALLC
@@ -875,8 +1066,12 @@ void parse(bytefile *bf, FILE *f = stdout) {
             st.push(args[i]);
           }
           if(n) PUSH_NUMBER (st, n);
-
-          return string_sprintf("CALLC\t%d", args_ct);
+          
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("CALLC\t%d", args_ct);
+          #endif
         }
                     
         case  6: { // CALL
@@ -896,7 +1091,11 @@ void parse(bytefile *bf, FILE *f = stdout) {
             st.push(args[i]);
           }
 
-          return string_sprintf("CALL\t0x%.8x %d", addr, args_ct);         
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("CALL\t0x%.8x %d", addr, args_ct);    
+          #endif     
         }
                     
         case  7: { // TAG
@@ -906,10 +1105,13 @@ void parse(bytefile *bf, FILE *f = stdout) {
           Value v = st.top(); st.pop();
           data* sdata = TO_DATA(v);
           sexp* s = TO_SEXP(v);
-          PUSH_NUMBER(st, int(!UNBOXED(v) && TAG(sdata->tag)==SEXP_TAG && LEN(sdata->tag) == n && s->tag == LtagHash(name)));
+          PUSH_NUMBER(st, int(!UNBOXED(v) && TAG(sdata->tag)==SEXP_TAG && LEN(sdata->tag) == n && s->tag == UNBOX(LtagHash(name))));
 
-          return string_sprintf("TAG\t%s %d", name, n);
-          
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("TAG\t%s %d", name, n);
+          #endif
         }
           
         case  8: { // ARRAY
@@ -919,17 +1121,33 @@ void parse(bytefile *bf, FILE *f = stdout) {
           data* adata = TO_DATA(v);
           PUSH_NUMBER(st, int(TAG(adata->tag) == ARRAY_TAG && LEN(adata->tag) == n));
 
-          return string_sprintf("ARRAY\t%d", n);
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("ARRAY\t%d", n);
+          #endif
         }
                    
         case  9: { // FAIL
           int a = INT;
           int b = INT;
-          return string_sprintf("FAIL\t%d %d", a, b);
+          Value v = st.top(); st.pop();
+          Bmatch_failure((void*)v, fname, a, b);
+
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("FAIL\t%d %d", a, b);
+          #endif
         }
           
         case 10: { // LINE
-          return string_sprintf("LINE\t%d", INT);
+          int a = INT;
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("LINE\t%d", a);
+          #endif
         }
           
         default:
@@ -980,7 +1198,13 @@ void parse(bytefile *bf, FILE *f = stdout) {
             exit(1);
           }
         } 
-        return string_sprintf("PATT\t%s", pats[l]);
+
+
+        #ifndef DEBUG
+          return 0;
+        #else 
+          return string_sprintf("PATT\t%s", pats[l]);
+        #endif
       }
         
 
@@ -990,16 +1214,22 @@ void parse(bytefile *bf, FILE *f = stdout) {
           int n;
           fscanf(stdin, "%d", &n);
           PUSH_NUMBER(st, n);
-
-          return std::string("CALL\tLread");
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("CALL\tLread");
+          #endif
         }
                     
         case 1: { // WRITE
           Number n = POP_UNBOXED(st);
           PUSH_NUMBER(st, n);
           fprintf(stdout, "%d\n", (int)n);
-
-          return std::string("CALL\tLwrite");
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("CALL\tLwrite");
+          #endif
         }
 
         case 2: { // Llength
@@ -1007,12 +1237,22 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
           int sz = LEN(vdata->tag);
           PUSH_NUMBER(st, Number(sz));
-
-          return std::string("CALL\tLlength");
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("CALL\tLlength");
+          #endif
         }
           
         case 3: { // Lstring
-          return std::string("CALL\tLstring");
+          Value v = st.top(); st.pop();
+          v = (int)Bstringval((void*)v);
+          st.push(v);
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return std::string("CALL\tLstring");
+          #endif
         }
           
         case 4: { // Barray
@@ -1029,7 +1269,11 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
           PUSH_ARRAY(st, a);
 
-          return string_sprintf("CALL\tBarray %d", n);
+          #ifndef DEBUG
+            return 0;
+          #else 
+            return string_sprintf("CALL\tBarray %d", n);
+          #endif
         }
           
         default:
@@ -1042,22 +1286,27 @@ void parse(bytefile *bf, FILE *f = stdout) {
         FAIL;
       }
 
-      return std::string("");
+      #ifndef DEBUG
+        return 0;
+      #else 
+        return std::string("");
+      #endif
     };
-    
-    auto print = switch_lambda();
-    //printf("%s\n",print.c_str());
 
-    //printf("\t\t=====debug=====\n");
-    //debug_stack(st);
-    //printf("\t\t===============\n");
+    auto print = switch_lambda();
+
+  #ifdef DEBUG
+    printf("%s\n",print.c_str());
+
+    printf("\t\t=====debug=====\n");
+    debug_stack(st);
+    printf("\t\t===============\n");
+  #endif
 
     if(h==5 && l==9) {
-      fprintf(stdout, "[stdout] *** FAILURE: match failure at {file}:{a}:{b}, value \'{str}\'\n");
       break;
     }
     if(h==15) break;
-    //fprintf (f, "\n");
   }
   while (1);
 }
@@ -1065,9 +1314,8 @@ void parse(bytefile *bf, FILE *f = stdout) {
 int main (int argc, char* argv[]) {
   bytefile bf;
   read_file(argv[1], bf);
-  parse(&bf);
+  parse(&bf, argv[1]);
 
   delete[] bf.buffer;
-  delete[] bf.global_ptr;
   return 0;
 }
