@@ -353,7 +353,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
 # define STRING get_string (bf, INT)
 # define FAIL   fprintf (stderr, "ERROR: invalid opcode %d-%d\n", h, l)
   
-  Stack st = Stack(100000, bf->global_area_size);
+  Stack st = Stack(10000000, bf->global_area_size);
   
   st.setup(0, 0);
 
@@ -370,7 +370,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
 
                         int ______;
                         //fscanf(stdin, "%d", &______);
-    fprintf (f, "0x%.8x:\t", ip-bf->code_ptr-1);
+    //fprintf (f, "0x%.8x:\t", ip-bf->code_ptr-1);
 
     auto switch_lambda = [&st, &bf, &ip, h, l]() {
       static const char* ops [] = {"+", "-", "*", "/", "%", "<", "<=", ">", ">=", "==", "!=", "&&", "!!"};
@@ -495,7 +495,6 @@ void parse(bytefile *bf, FILE *f = stdout) {
           exit(1);
           return std::string("STI");
         }
-          
           
         case  4: { // STA
           Value val = st.top(); st.pop();
@@ -886,7 +885,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
           Value v = st.top(); st.pop();
           data* sdata = TO_DATA(v);
           sexp* s = TO_SEXP(v);
-          PUSH_NUMBER(st, int(TAG(sdata->tag)==SEXP_TAG && LEN(sdata->tag) == n && s->tag == LtagHash(name)));
+          PUSH_NUMBER(st, int(!UNBOXED(v) && TAG(sdata->tag)==SEXP_TAG && LEN(sdata->tag) == n && s->tag == LtagHash(name)));
 
           return string_sprintf("TAG\t%s %d", name, n);
           
@@ -977,7 +976,7 @@ void parse(bytefile *bf, FILE *f = stdout) {
         case 1: { // WRITE
           Number n = POP_UNBOXED(st);
           PUSH_NUMBER(st, n);
-          fprintf(stdout, "\n[stdout]%d\n\n", (int)n);
+          fprintf(stdout, "%d\n", (int)n);
 
           return std::string("CALL\tLwrite");
         }
@@ -1026,11 +1025,11 @@ void parse(bytefile *bf, FILE *f = stdout) {
     };
     
     auto print = switch_lambda();
-    printf("%s\n",print.c_str());
+    //printf("%s\n",print.c_str());
 
-    printf("\t\t=====debug=====\n");
-    debug_stack(st);
-    printf("\t\t===============\n");
+    //printf("\t\t=====debug=====\n");
+    //debug_stack(st);
+    //printf("\t\t===============\n");
 
     if(h==5 && l==9) {
       fprintf(stdout, "[stdout] *** FAILURE: match failure at {file}:{a}:{b}, value \'{str}\'\n");
