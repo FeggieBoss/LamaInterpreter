@@ -46,7 +46,7 @@ public:
   unsigned int global_ct;
   Value *globals;
   char *ptr;
-  char *sp, *lp, *fp, *cp;
+  char *lp, *fp, *cp;
 
   Stack(const unsigned int mx_size_, const unsigned int _global_ct) {
     mx_size = mx_size_;
@@ -56,10 +56,10 @@ public:
     globals = reinterpret_cast<Value*>(ptr);
     for(int i=0;i<_global_ct;++i) globals[i] = BOX(0);
 
-    cp = sp = lp = fp = ptr + sizeof(Value) * global_ct;
+    cp  = lp = fp = ptr + sizeof(Value) * global_ct;
+    __gc_stack_bottom = (size_t)fp;
 
     __gc_stack_top = (size_t)(ptr-sizeof(Value));
-    __gc_stack_bottom = (size_t)ptr;
   }
 
   ~Stack() {
@@ -67,6 +67,7 @@ public:
   }
 
   void setup(const unsigned int args_ct, const unsigned int locals_ct, const unsigned int captured_ct = 0) {
+    char* sp = (char*)__gc_stack_bottom;
     char *prev_sp = sp-(captured_ct + args_ct + 1)*sizeof(Value), *prev_lp = lp, *prev_fp = fp, *prev_cp = cp;
     
     char* cur = prev_sp;
@@ -111,10 +112,11 @@ public:
     
     sp = cur;
 
-    __gc_stack_bottom = (size_t)(sp+sizeof(Value));
+    __gc_stack_bottom = (size_t)sp;
   }
 
   Value& top() {
+    char* sp = (char*)__gc_stack_bottom;
     if(sp==fp+sizeof(char*)) {
       std::cerr<<"Unexpected stack.top(): stack is empty\n";
       exit(1);
@@ -135,6 +137,7 @@ public:
   }
 
   void push(Value &&v) {
+    char* sp = (char*)__gc_stack_bottom;
     if(sp+sizeof(Value)>=ptr+mx_size) {
       std::cerr<<"Unexpected stack.push(): no more space reserved\n";
       exit(1);
@@ -142,10 +145,11 @@ public:
     auto dop = v;
     memcpy(reinterpret_cast<void*>(sp), reinterpret_cast<void*>(&dop), sizeof(Value));
     sp += sizeof(Value);
-    __gc_stack_bottom = (size_t)(sp+sizeof(Value));
+    __gc_stack_bottom = (size_t)sp;
   }
 
   void push(Value &v) {
+    char* sp = (char*)__gc_stack_bottom;
     if(sp+sizeof(Value)>=ptr+mx_size) {
       std::cerr<<"Unexpected stack.push(): no more space reserved\n";
       exit(1);
@@ -153,16 +157,17 @@ public:
     auto dop = v;
     memcpy(reinterpret_cast<void*>(sp), reinterpret_cast<void*>(&dop), sizeof(Value));
     sp += sizeof(Value);
-    __gc_stack_bottom = (size_t)(sp+sizeof(Value));
+    __gc_stack_bottom = (size_t)sp;
   }
 
   void pop(unsigned int _sizeof = sizeof(Value)) {
+    char* sp = (char*)__gc_stack_bottom;
     if(sp==fp+sizeof(char*)) {
       std::cerr<<"Unexpected stack.pop(): stack is empty\n";
       exit(1);
     }
-    sp-=_sizeof;
-    __gc_stack_bottom = (size_t)(sp+sizeof(Value));
+    sp -= _sizeof;
+    __gc_stack_bottom = (size_t)sp;
   }
 private:
   unsigned int mx_size;
@@ -232,7 +237,7 @@ void debug_stack(const Stack &st) {
   }
   printf("]\n");
 
-  char *sp=st.sp,*lp=st.lp,*fp=st.fp, *cp=st.cp;
+  char *sp = (char*)__gc_stack_bottom, *lp=st.lp,*fp=st.fp, *cp=st.cp;
 
   char *prev_fp = nullptr, *prev_sp = nullptr, *prev_lp = nullptr, *prev_cp = nullptr;
   while(prev_fp != st.ptr + sizeof(Value) * st.global_ct) {
@@ -519,14 +524,11 @@ void parse(bytefile *bf, char* fname) {
           char *name = STRING;
           int n = INT;
 
-          Value* ptr = new Value[n];
-          for(int i=0;i<n;++i) {
-            ptr[n-i-1] = st.top(); st.pop();
-          }
           Sexp s = Bsexp___(BOX(n+1), UNBOX(LtagHash(name)));
           
-          for(int i=0;i<n;++i) {
-            reinterpret_cast<int*>(s)[i] = ptr[i];
+          for(int i=n-1;i>=0;--i) {
+            reinterpret_cast<int*>(s)[i] = st.top();
+            st.pop();
           }
 
           PUSH_SEXP(st, s);
@@ -631,16 +633,15 @@ void parse(bytefile *bf, char* fname) {
 
           auto ret = st.top(); st.pop();
 
-          st.sp = st.cp + sizeof(Value);
+          __gc_stack_bottom = (size_t)(st.cp+sizeof(Value));
           int prev_ip = POP_UNBOXED(st); st.pop();
 
+          // shrinking stack
           st.lp = prev_lp;
           st.fp = prev_fp;
-          st.sp = prev_sp;
           st.cp = prev_cp;
-
-          // shrinking stack
-          __gc_stack_bottom = (size_t)(st.sp+sizeof(Value));
+          __gc_stack_bottom = (size_t)prev_sp;
+          //__gc_root_scan_stack();
 
           ip = bf->code_ptr + prev_ip;
 
@@ -1257,14 +1258,11 @@ void parse(bytefile *bf, char* fname) {
           
         case 4: { // Barray
           int n = INT;
-          Value* ptr = new Value[n];
-          for(unsigned int i=0;i<n;++i) {
-            ptr[n-i-1] = st.top(); st.pop();
-          }
           
           Array a = (void*)Barray___(BOX(n));
-          for(unsigned int i=0;i<n;++i) {
-            reinterpret_cast<int*>(a)[i] = ptr[i];
+          for(int i=n-1;i>=0;--i) {
+            reinterpret_cast<int*>(a)[i] = st.top(); 
+            st.pop();
           }
 
           PUSH_ARRAY(st, a);
@@ -1303,9 +1301,6 @@ void parse(bytefile *bf, char* fname) {
     printf("\t\t===============\n");
   #endif
 
-    if(h==5 && l==9) {
-      break;
-    }
     if(h==15) break;
   }
   while (1);

@@ -9,7 +9,6 @@
 # define alloc malloc
 # endif
 
-
 void *global_sysargs;
 
 /* # define DEBUG_PRINT 1 */
@@ -2074,7 +2073,7 @@ static void printFromSpace (void) {
       len = LEN(d->tag);
       for (int i = 0; i < len; i++) {
 	int elem = ((int*)d->contents)[i];
-	if (UNBOXED(elem)) printf ("%d ", elem);
+	if (UNBOXED(elem)) printf ("%d ", UNBOX(elem));
 	else printf ("%p ", elem);
       }
       len += 1;
@@ -2136,6 +2135,7 @@ extern void * alloc (size_t size) {
 #ifdef DEBUG_PRINT
     print_indent ();
     printf (";new current: %p \n", from_space.current); fflush (stdout);
+    printFromSpace(); fflush (stdout);
     indent--;
 #endif
     return p;

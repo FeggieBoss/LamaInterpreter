@@ -3,7 +3,7 @@ project(main)
 set(CMAKE_CXX_STANDARD 17)
 
 add_executable(main interpreter.cpp)
-target_compile_options(main PUBLIC -m32)
+target_compile_options(main PUBLIC -m32 -no-pie)
 
 add_library(Runtime STATIC IMPORTED)
 set_target_properties(Runtime PROPERTIES
@@ -13,4 +13,4 @@ set_target_properties(Runtime PROPERTIES
 )
 
 target_link_libraries(main PRIVATE Runtime)
-target_link_options(main PUBLIC -m32)
+target_link_options(main PUBLIC -m32 -no-pie)

@@ -13,6 +13,8 @@
 # include <time.h>
 # include <limits.h>
 
+//#define DEBUG_PRINT
+
 # define STRING_TAG  0x00000001
 # define ARRAY_TAG   0x00000003
 # define SEXP_TAG    0x00000005
@@ -60,6 +62,6 @@ extern void Bmatch_failure(void *v, char *fname, int line, int col);
 extern void* Bstringval (void *p);
 
 
-extern void __gc_root_scan_stack ();
+extern void __gc_root_scan_stack();
 
 #endif

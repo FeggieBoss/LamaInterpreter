@@ -6,5 +6,5 @@ CXX_DEFINES = -DRUNTIME_STATIC -DUSING_RUNTIME
 
 CXX_INCLUDES = -isystem /home/feggie/MyData/Virtualki/hw2/LamaInterpreter/runtime
 
-CXX_FLAGS = -std=gnu++17 -m32
+CXX_FLAGS = -std=gnu++17 -m32 -no-pie
 
