@@ -18,6 +18,7 @@ void *__start_custom_data;
 void *__stop_custom_data;
 
 //#define DEBUG
+//#define DEBUG_WAIT_ON_STEP
 
 typedef int Number;
 typedef void* String;
@@ -42,86 +43,139 @@ typedef int Value;
 // };
 
 class Stack {
+/*
+    | operand  |
+    |  stack   |<---sp / __gc_stack_top
+    +----------+
+    |prev_sp   |
+    +----------+<---fp
+    |prev_fp   |
+    +----------+
+    |prev_lp   |
+    +----------+
+    |prev_cp   |
+    +----------+
+    |local_n   |
+    |...       |
+    |local_0   |
+    +----------+<---lp
+    |arg_0     |
+    |...       |(reversed)
+    |arg_n     |
+    +----------+
+    |prev_ip   |
+    +----------+    
+    |captured_n|
+    |...       |
+    |captured_0|
+    +----------+<---cp
+    |capturedsz|
+    +----------+         stack section №i
+    {
+      stack sections
+    }
+    +----------+  
+    |global_0  |<---globals
+    |...       |
+    |global_n  |<---ptr_start / __gc_stack_bottom
+    +----------+
+*/
 public:
   unsigned int global_ct;
   Value *globals;
-  char *ptr;
+  char *ptr_end, *ptr_start;
   char *lp, *fp, *cp;
 
   Stack(const unsigned int mx_size_, const unsigned int _global_ct) {
     mx_size = mx_size_;
     global_ct = _global_ct;
 
-    ptr = new char[mx_size_ + _global_ct*sizeof(Value)];
-    globals = reinterpret_cast<Value*>(ptr);
+    ptr_end = new char[mx_size_ + _global_ct*sizeof(Value)];
+    ptr_start = ptr_end + mx_size_ + _global_ct*sizeof(Value);
+
+    globals = reinterpret_cast<Value*>(ptr_end + mx_size_);
     for(int i=0;i<_global_ct;++i) globals[i] = BOX(0);
 
-    cp  = lp = fp = ptr + sizeof(Value) * global_ct;
-    __gc_stack_bottom = (size_t)fp;
+    lp = fp = ptr_end + mx_size_;
+    cp = ptr_end + mx_size_ - sizeof(Value);
 
-    __gc_stack_top = (size_t)(ptr-sizeof(Value));
+    __gc_stack_bottom = (size_t)ptr_start;
+    __gc_stack_top = (size_t)(cp);
+
+    this->push(BOX(0)); // captured_sz
+    this->push(BOX(0)); // prev_ip
+    
+    this->setup(0, 0);
   }
 
   ~Stack() {
-    delete[] ptr;
+    delete[] ptr_end;
   }
 
   void setup(const unsigned int args_ct, const unsigned int locals_ct, const unsigned int captured_ct = 0) {
-    char* sp = (char*)__gc_stack_bottom;
-    char *prev_sp = sp-(captured_ct + args_ct + 1)*sizeof(Value), *prev_lp = lp, *prev_fp = fp, *prev_cp = cp;
+    char* sp = (char*)(__gc_stack_top);
+
+    unsigned int free_space = (sp - ptr_end) + sizeof(Value), need = (locals_ct+5)*sizeof(Value);
+    if(free_space < need) {
+      std::cerr<<"Setup: no more space avaible - free space is " << free_space << " but need " << need << "\n";
+      exit(1);
+    }
+
+    char *prev_sp = sp+(captured_ct + 1 + args_ct + 1)*sizeof(Value), *prev_lp = lp, *prev_fp = fp, *prev_cp = cp;
     
     char* cur = prev_sp;
 
     // CAPTURED
-    cur += captured_ct*sizeof(Value);
     cp = cur;
+    cur -= captured_ct*sizeof(Value);
 
     // PREV_IP
-    cur += sizeof(Value);
+    cur -= sizeof(Value);
 
     // ARGS
-    cur += args_ct * sizeof(Value);
-    // for(unsigned int i=0;i<args_ct/2;++i) { // ARGS reverse
-    //   auto dop = Value();
-    //   memcpy(reinterpret_cast<void*>(&dop), reinterpret_cast<void*>(prev_sp + i*sizeof(Value)), sizeof(Value));
-    //   memcpy(reinterpret_cast<void*>(prev_sp + i*sizeof(Value)), reinterpret_cast<void*>(sp - (i+1)*sizeof(Value)), sizeof(Value));
-    //   memcpy(reinterpret_cast<void*>(sp - (i+1)*sizeof(Value)), reinterpret_cast<void*>(&dop), sizeof(Value));
-    // }
+    char* arg_end = cur;
+    cur -= args_ct * sizeof(Value);
+    for(unsigned int i=0;i<args_ct/2;++i) { // ARGS reverse
+      auto dop = Value();
+      memcpy(reinterpret_cast<void*>(&dop), reinterpret_cast<void*>(cur + i*sizeof(Value)), sizeof(Value));
+      memcpy(reinterpret_cast<void*>(cur + i*sizeof(Value)), reinterpret_cast<void*>(arg_end - (i+1)*sizeof(Value)), sizeof(Value));
+      memcpy(reinterpret_cast<void*>(arg_end - (i+1)*sizeof(Value)), reinterpret_cast<void*>(&dop), sizeof(Value));
+    }
 
     // LOCALS
     lp = cur;
     for(unsigned int i=0;i<locals_ct;++i) { 
       auto dop = BOX(Value());
+      cur -= sizeof(Value);
       memcpy(reinterpret_cast<void*>(cur), reinterpret_cast<void*>(&dop), sizeof(Value));
-      cur += sizeof(Value);
     }
 
+    cur -= sizeof(char*);
     *reinterpret_cast<char**>(cur) = prev_cp; // prevCP
-    cur += sizeof(char*);
 
+    cur -= sizeof(char*);
     *reinterpret_cast<char**>(cur) = prev_lp; // prevLP
-    cur += sizeof(char*);
 
+    cur -= sizeof(char*);
     *reinterpret_cast<char**>(cur) = prev_fp; // prevFP
-    cur += sizeof(char*);
 
     fp = cur;
     
+    cur -= sizeof(char*);
     *reinterpret_cast<char**>(cur) = prev_sp; // prevSP
-    cur += sizeof(char*);
     
-    sp = cur;
+    sp = cur - sizeof(char*);
 
-    __gc_stack_bottom = (size_t)sp;
+    __gc_stack_top = (size_t)sp;
   }
 
   Value& top() {
-    char* sp = (char*)__gc_stack_bottom;
-    if(sp==fp+sizeof(char*)) {
+    char* sp = (char*)__gc_stack_top;
+    if(sp+sizeof(char*)==fp-sizeof(char*)) {
       std::cerr<<"Unexpected stack.top(): stack is empty\n";
       exit(1);
     }
-    return *reinterpret_cast<Value*>(sp-sizeof(Value));
+    return *reinterpret_cast<Value*>(sp+sizeof(Value));
   }
 
   Value* get_cpt(unsigned int x) {
@@ -129,45 +183,47 @@ public:
   }
 
   Value* get_arg(unsigned int x) {
-    return reinterpret_cast<Value*>(lp-(x+1)*sizeof(Value));
+    return reinterpret_cast<Value*>(lp+(x)*sizeof(Value));
   }
 
   Value* get_loc(unsigned int x) {
-    return reinterpret_cast<Value*>(lp+x*sizeof(Value));
+    return reinterpret_cast<Value*>(lp-(x+1)*sizeof(Value));
   }
 
   void push(Value &&v) {
-    char* sp = (char*)__gc_stack_bottom;
-    if(sp+sizeof(Value)>=ptr+mx_size) {
-      std::cerr<<"Unexpected stack.push(): no more space reserved\n";
+    char* sp = (char*)__gc_stack_top;
+    if(sp-ptr_end<sizeof(Value)) {
+      std::cerr<<"Unexpected stack.push(): no more space avaible - free space is " << sp-ptr_end << " but need " << sizeof(Value) << "\n";
       exit(1);
     }
+
     auto dop = v;
     memcpy(reinterpret_cast<void*>(sp), reinterpret_cast<void*>(&dop), sizeof(Value));
-    sp += sizeof(Value);
-    __gc_stack_bottom = (size_t)sp;
+    sp -= sizeof(Value);
+    __gc_stack_top = (size_t)sp;
   }
 
   void push(Value &v) {
-    char* sp = (char*)__gc_stack_bottom;
-    if(sp+sizeof(Value)>=ptr+mx_size) {
-      std::cerr<<"Unexpected stack.push(): no more space reserved\n";
+    char* sp = (char*)__gc_stack_top;
+    if(sp-ptr_end<sizeof(Value)) {
+      std::cerr<<"Unexpected stack.push(): no more space avaible - free space is " << sp-ptr_end << " but need " << sizeof(Value) << "\n";
       exit(1);
     }
+
     auto dop = v;
     memcpy(reinterpret_cast<void*>(sp), reinterpret_cast<void*>(&dop), sizeof(Value));
-    sp += sizeof(Value);
-    __gc_stack_bottom = (size_t)sp;
+    sp -= sizeof(Value);
+    __gc_stack_top = (size_t)sp;
   }
 
   void pop(unsigned int _sizeof = sizeof(Value)) {
-    char* sp = (char*)__gc_stack_bottom;
-    if(sp==fp+sizeof(char*)) {
+    char* sp = (char*)__gc_stack_top;
+    if((fp-sizeof(char*))-sp < _sizeof) {
       std::cerr<<"Unexpected stack.pop(): stack is empty\n";
       exit(1);
     }
-    sp -= _sizeof;
-    __gc_stack_bottom = (size_t)sp;
+    sp += sizeof(char*);
+    __gc_stack_top = (size_t)sp;
   }
 private:
   unsigned int mx_size;
@@ -237,53 +293,55 @@ void debug_stack(const Stack &st) {
   }
   printf("]\n");
 
-  char *sp = (char*)__gc_stack_bottom, *lp=st.lp,*fp=st.fp, *cp=st.cp;
+  char *sp = (char*)__gc_stack_top, *lp=st.lp,*fp=st.fp, *cp=st.cp;
 
   char *prev_fp = nullptr, *prev_sp = nullptr, *prev_lp = nullptr, *prev_cp = nullptr;
-  while(prev_fp != st.ptr + sizeof(Value) * st.global_ct) {
-    prev_cp = *reinterpret_cast<char**>(fp-3*sizeof(char*));
-    prev_lp = *reinterpret_cast<char**>(fp-2*sizeof(char*));
-    prev_fp = *reinterpret_cast<char**>(fp-sizeof(char*));
-    prev_sp = *reinterpret_cast<char**>(fp);
+  while(prev_fp != (char*)st.globals) {
+    prev_cp = *reinterpret_cast<char**>(fp+2*sizeof(char*));
+    prev_lp = *reinterpret_cast<char**>(fp+1*sizeof(char*));
+    prev_fp = *reinterpret_cast<char**>(fp);
+    prev_sp = *reinterpret_cast<char**>(fp-1*sizeof(char*));
 
-    char *cur = prev_sp;
+    char *cur = fp - 2*sizeof(char*);
+
+    printf("\tOPS: [");
+    while(cur!=sp) {
+      debug_value(reinterpret_cast<Value*>(cur));
+      printf(" , ");
+      cur-=sizeof(Value);
+    }
+    printf("]\n");
+
+
+    cur = lp - sizeof(Value);
+    printf("\tLOCALS: [");
+    while(cur!=(fp+2*sizeof(char*))) {
+      debug_value(reinterpret_cast<Value*>(cur));
+      printf(" , ");
+      cur-=sizeof(Value);
+    }
+    printf("]\n");
+
+    unsigned int captured_sz = UNBOX(*reinterpret_cast<Value*>(cp));
+
+    cur = lp;
+    printf("\tARGS: [");
+    while(cur!=cp-(captured_sz+1)*sizeof(Value)) {
+      debug_value(reinterpret_cast<Value*>(cur));
+      printf(" , ");
+      cur+=sizeof(Value);
+    }
+    printf("]\n");
+
+    cur += sizeof(Value);
+
     printf("\tCAPTURED: [");
     while(cur!=cp) {
       debug_value(reinterpret_cast<Value*>(cur));
       printf(" , ");
       cur+=sizeof(Value);
     }
-    printf("]\n");
-
-    cur = lp;
-    printf("\tARGS: [");
-    while(cur!=cp+sizeof(Value)) {
-      cur-=sizeof(Value);
-      debug_value(reinterpret_cast<Value*>(cur));
-      printf(" , ");
-    }
-    printf("]\n");
-
-    cur = lp;
-    printf("\tLOCALS: [");
-    while(cur!=(fp-3*sizeof(char*))) {
-      debug_value(reinterpret_cast<Value*>(cur));
-      printf(" , ");
-      cur+=sizeof(Value);
-    }
-    printf("]\n");
-
-
-    cur = fp;
-    cur += sizeof(char*);
-  
-    printf("\tOPS: [");
-    while(cur!=sp) {
-      debug_value(reinterpret_cast<Value*>(cur));
-      printf(" , ");
-      cur+=sizeof(Value);
-    }
-    printf("]\n");
+    printf("]\n");    
 
     sp = prev_sp;
     fp = prev_fp;
@@ -389,13 +447,11 @@ void parse(bytefile *bf, char* fname) {
 # define FAIL   fprintf (stderr, "ERROR: invalid opcode %d-%d\n", h, l)
   
   Stack st = Stack(10000000, bf->global_area_size);
-  
-  st.setup(0, 0);
 
-  PUSH_NUMBER(st, (bf->end_code_ptr - bf->code_ptr) - 1); // sizeof(STOP) = 1
-
-  PUSH_NUMBER(st, 80085);
-  PUSH_NUMBER(st, 555);
+  PUSH_NUMBER(st, 0); // captured_sz
+  PUSH_NUMBER(st, (bf->end_code_ptr - bf->code_ptr) - 1); // prev_ip // sizeof(STOP) = 1
+  PUSH_NUMBER(st, 80085); 
+  PUSH_NUMBER(st, 555);   
 
   char *ip = bf->code_ptr;
   do {
@@ -626,21 +682,21 @@ void parse(bytefile *bf, char* fname) {
         }
                     
         case  6: { // END
-          char *prev_cp = *reinterpret_cast<char**>(st.fp-3*sizeof(char*));
-          char *prev_lp = *reinterpret_cast<char**>(st.fp-2*sizeof(char*));
-          char *prev_fp = *reinterpret_cast<char**>(st.fp-sizeof(char*));
-          char *prev_sp = *reinterpret_cast<char**>(st.fp);
+          char *prev_cp = *reinterpret_cast<char**>(st.fp+2*sizeof(char*));
+          char *prev_lp = *reinterpret_cast<char**>(st.fp+1*sizeof(char*));
+          char *prev_fp = *reinterpret_cast<char**>(st.fp+0*sizeof(char*));
+          char *prev_sp = *reinterpret_cast<char**>(st.fp-1*sizeof(char*));
 
           auto ret = st.top(); st.pop();
 
-          __gc_stack_bottom = (size_t)(st.cp+sizeof(Value));
-          int prev_ip = POP_UNBOXED(st); st.pop();
+          unsigned int captured_sz = UNBOX(*reinterpret_cast<Value*>(st.cp));
+          int prev_ip = (size_t)UNBOX(*reinterpret_cast<Value*>(st.cp-(captured_sz+1)*sizeof(Value)));
 
           // shrinking stack
           st.lp = prev_lp;
           st.fp = prev_fp;
           st.cp = prev_cp;
-          __gc_stack_bottom = (size_t)prev_sp;
+          __gc_stack_top = (size_t)prev_sp;
           //__gc_root_scan_stack();
 
           ip = bf->code_ptr + prev_ip;
@@ -1047,26 +1103,32 @@ void parse(bytefile *bf, char* fname) {
         case  5: { // CALLC
           int args_ct = INT;
 
-          Value args[args_ct];
-          for(unsigned int i=0;i<args_ct;++i) {
-            args[i] = st.top(); st.pop();
-          }
-
+          char* sp = (char*)__gc_stack_top;
+          sp += args_ct * sizeof(Value);
+          __gc_stack_top = (size_t)sp;
+          
           Fun fun = (void*)st.top(); st.pop();
           data* fundata = TO_DATA(fun);
+          unsigned int n = LEN(fundata->tag) - 1;
           
           Number prev_ip = Number(ip-(bf->code_ptr));
           ip = bf->code_ptr + reinterpret_cast<int*>(fun)[0];
 
-          unsigned int n = LEN(fundata->tag) - 1;
+          sp += sizeof(Value);
+          memcpy((void*)(sp - (args_ct+1+n)*sizeof(Value)), (void*)(sp-args_ct*sizeof(Value)), args_ct*sizeof(Value));
+
+
+          PUSH_NUMBER(st, n);
+          
           for(unsigned int i=0;i<n;++i) {
             st.push(reinterpret_cast<int*>(fun)[n-i]);
           }
           PUSH_NUMBER(st, prev_ip);
-          for(unsigned int i=0;i<args_ct;++i) {
-            st.push(args[i]);
-          }
+
+          __gc_stack_top = (size_t)(sp-(args_ct+1+n+1)*sizeof(Value));
+
           if(n) PUSH_NUMBER (st, n);
+          
           
           #ifndef DEBUG
             return 0;
@@ -1078,19 +1140,20 @@ void parse(bytefile *bf, char* fname) {
         case  6: { // CALL
           int addr = INT;
           int args_ct = INT;
-
-          Value args[args_ct];
-          for(unsigned int i=0;i<args_ct;++i) {
-            args[i] = st.top(); st.pop();
-          }
           
           Number prev_ip = Number(ip-(bf->code_ptr));
           ip = bf->code_ptr + addr;
 
+          char* sp = (char*)__gc_stack_top;
+          sp += args_ct*sizeof(Value);
+          __gc_stack_top = (size_t)sp;
+          sp += sizeof(Value);
+          memcpy((void*)(sp-(args_ct+1+1)*sizeof(Value)), (void*)(sp - args_ct*sizeof(Value)), args_ct*sizeof(Value));
+
+          PUSH_NUMBER(st, 0);
           PUSH_NUMBER(st, prev_ip);
-          for(unsigned int i=0;i<args_ct;++i) {
-            st.push(args[i]);
-          }
+
+          __gc_stack_top = (size_t)(sp-(args_ct+1+1+1)*sizeof(Value));
 
           #ifndef DEBUG
             return 0;

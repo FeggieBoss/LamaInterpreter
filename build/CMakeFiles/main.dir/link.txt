@@ -1,1 +1,1 @@
-/usr/bin/c++ -rdynamic -m32 CMakeFiles/main.dir/interpreter.cpp.o -o main  /home/feggie/MyData/Virtualki/hw2/LamaInterpreter/runtime/runtime.a 
+/usr/bin/c++ -rdynamic -m32 -no-pie CMakeFiles/main.dir/interpreter.cpp.o -o main  /home/feggie/MyData/Virtualki/hw2/LamaInterpreter/runtime/runtime.a 
