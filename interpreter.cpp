@@ -1115,6 +1115,10 @@ void parse(bytefile *bf, char* fname) {
           ip = bf->code_ptr + reinterpret_cast<int*>(fun)[0];
 
           sp += sizeof(Value);
+          if(sp-st.ptr_end<(args_ct+1+n+1)*sizeof(Value)) {
+            std::cerr<<"Unexpected CALLC: no more space avaible - free space is " << sp-st.ptr_end << " but need " << (args_ct+1+n+1)*sizeof(Value) << "\n";
+            exit(1);
+          }
           memcpy((void*)(sp - (args_ct+1+n)*sizeof(Value)), (void*)(sp-args_ct*sizeof(Value)), args_ct*sizeof(Value));
 
 
@@ -1148,6 +1152,11 @@ void parse(bytefile *bf, char* fname) {
           sp += args_ct*sizeof(Value);
           __gc_stack_top = (size_t)sp;
           sp += sizeof(Value);
+
+          if(sp-st.ptr_end<(args_ct+1+1)*sizeof(Value)) {
+            std::cerr<<"Unexpected CALLC: no more space avaible - free space is " << sp-st.ptr_end << " but need " << (args_ct+1+1)*sizeof(Value) << "\n";
+            exit(1);
+          }
           memcpy((void*)(sp-(args_ct+1+1)*sizeof(Value)), (void*)(sp - args_ct*sizeof(Value)), args_ct*sizeof(Value));
 
           PUSH_NUMBER(st, 0);
